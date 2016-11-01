@@ -1,4 +1,5 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -929,12 +930,15 @@ static int venus_hfi_vote_active_buses(void *dev,
 		return -EINVAL;
 	}
 
-        cached_vote_data = device->bus_load.vote_data;
-        if (!cached_vote_data) {
-                dprintk(VIDC_ERR,"Invalid bus load vote data\n");
-                rc = -ENOMEM;
-                goto err_no_mem;
-        }
+	/* (Re-)alloc memory to store the new votes (in case we internally
+	 * re-vote after power collapse, which is transparent to client) */
+	cached_vote_data = krealloc(device->bus_load.vote_data, num_data *
+			sizeof(*cached_vote_data), GFP_KERNEL);
+	if (!cached_vote_data) {
+		dprintk(VIDC_ERR, "Can't alloc memory to cache bus votes\n");
+		rc = -ENOMEM;
+		goto err_no_mem;
+	}
 
 	/* Alloc & init the load table */
 	num_bus = device->res->bus_set.count;
@@ -3316,18 +3320,30 @@ static void venus_hfi_process_msg_event_notify(
 static void venus_hfi_flush_debug_queue(
 	struct venus_hfi_device *device, u8 *packet)
 {
-	u8 local_packet[VIDC_IFACEQ_MED_PKT_SIZE];
-	if (!device) {
-		dprintk(VIDC_ERR, "%s: Invalid params\n", __func__);
-		return;
+	bool local_packet = false;
+	if (!packet) {
+		packet = kzalloc(VIDC_IFACEQ_VAR_HUGE_PKT_SIZE, GFP_TEMPORARY);
+		if (!packet) {
+			dprintk(VIDC_ERR, "In %s() Fail to allocate mem\n",
+				__func__);
+			return;
+		}
+		local_packet = true;
 	}
-	if (!packet)
-		packet = local_packet;
-
 	while (!venus_hfi_iface_dbgq_read(device, packet)) {
 		struct hfi_msg_sys_coverage_packet *pkt =
 			(struct hfi_msg_sys_coverage_packet *) packet;
 		if (pkt->packet_type == HFI_MSG_SYS_COV) {
+			int stm_size = 0;
+			dprintk(VIDC_DBG,
+				"DbgQ pkt size:%d\n", pkt->msg_size);
+			stm_size = stm_log_inv_ts(0, 0,
+				pkt->rg_msg_data, pkt->msg_size);
+			if (stm_size == 0)
+				dprintk(VIDC_ERR,
+					"In %s, stm_log returned size of 0\n",
+					__func__);
+
 			dprintk(VIDC_ERR,
 				"Code coverage support is deprecated\n");
 			continue;
@@ -3337,6 +3353,9 @@ static void venus_hfi_flush_debug_queue(
 			dprintk(VIDC_FW, "%s", pkt->rg_msg_data);
 		}
 	}
+	if (local_packet)
+		kfree(packet);
+
 }
 
 static void venus_hfi_response_handler(struct venus_hfi_device *device)
@@ -3774,15 +3793,9 @@ static int venus_hfi_init_bus(struct venus_hfi_device *device)
 		dprintk(VIDC_DBG, "Registered bus client %s\n", name);
 	}
 
-        device->bus_load.vote_data = (struct vidc_bus_vote_data *)
-                                        kzalloc(sizeof(struct vidc_bus_vote_data)*MAX_SUPPORTED_INSTANCES_COUNT, GFP_KERNEL);
+	device->bus_load.vote_data = NULL;
+	device->bus_load.vote_data_count = 0;
 
-        if (device->bus_load.vote_data == NULL) {
-                dprintk(VIDC_ERR,"Failed to allocate memory for vote_data\n");
-                rc = -ENOMEM;
-                goto err_init_bus;
-        }
-        device->bus_load.vote_data_count = 0;
 	return rc;
 err_init_bus:
 	venus_hfi_deinit_bus(device);
@@ -4155,7 +4168,6 @@ static void venus_hfi_unload_fw(void *dev)
 	}
 	if (device->resources.fw.cookie) {
 		flush_workqueue(device->vidc_workq);
-		cancel_delayed_work(&venus_hfi_pm_work);
 		flush_workqueue(device->venus_pm_workq);
 		subsystem_put(device->resources.fw.cookie);
 		venus_hfi_interface_queues_release(dev);
@@ -4531,4 +4543,3 @@ int venus_hfi_initialize(struct hfi_device *hdev, u32 device_id,
 err_venus_hfi_init:
 	return rc;
 }
-

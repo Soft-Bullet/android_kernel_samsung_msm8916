@@ -21,6 +21,11 @@
 #include "vidc_hfi_api.h"
 #include "msm_vidc_debug.h"
 
+#define V4L2_CID_MPEG_MSM_VIDC_BASE		(V4L2_CTRL_CLASS_MPEG | 0x2000)
+
+#define V4L2_CID_MPEG_VIDC_VIDEO_PRIORITY \
+		(V4L2_CID_MPEG_MSM_VIDC_BASE + 73)
+
 #define IS_ALREADY_IN_STATE(__p, __d) ({\
 	int __rc = (__p >= __d);\
 	__rc; \
@@ -111,9 +116,11 @@ static inline bool is_non_realtime_session(struct msm_vidc_inst *inst)
 	int rc = 0;
 	struct v4l2_control ctrl = {
 		.id = V4L2_CID_MPEG_VIDC_VIDEO_PRIORITY
-	};
+		};
 	rc = v4l2_g_ctrl(&inst->ctrl_handler, &ctrl);
-	return (!rc && ctrl.value);
+	if (!rc && ctrl.value)
+		return true;
+	return false;
 }
 enum multi_stream msm_comm_get_stream_output_mode(struct msm_vidc_inst *inst)
 {
@@ -136,13 +143,15 @@ static int msm_comm_get_mbs_per_sec(struct msm_vidc_inst *inst)
 	struct v4l2_control ctrl;
 
 	output_port_mbs = NUM_MBS_PER_FRAME(inst->prop.width[OUTPUT_PORT],
-		inst->prop.height[OUTPUT_PORT]);
+			inst->prop.height[OUTPUT_PORT]);
 	capture_port_mbs = NUM_MBS_PER_FRAME(inst->prop.width[CAPTURE_PORT],
-		inst->prop.height[CAPTURE_PORT]);
+			inst->prop.height[CAPTURE_PORT]);
 
 	ctrl.id = V4L2_CID_MPEG_VIDC_VIDEO_OPERATING_RATE;
 	rc = v4l2_g_ctrl(&inst->ctrl_handler, &ctrl);
 	if (!rc && ctrl.value) {
+		fps = (ctrl.value >> 16) ? ctrl.value >> 16 : 1;
+
 		fps = (ctrl.value >> 16)? ctrl.value >> 16: 1;
 		return max(output_port_mbs, capture_port_mbs) * fps;
 	} else
@@ -189,7 +198,7 @@ static int msm_comm_get_inst_load(struct msm_vidc_inst *inst,
 	int load = 0;
 
 	if (!(inst->state >= MSM_VIDC_OPEN_DONE &&
-			inst->state < MSM_VIDC_STOP_DONE))
+		inst->state < MSM_VIDC_STOP_DONE))
 		return 0;
 
 	load = msm_comm_get_mbs_per_sec(inst);
@@ -203,6 +212,13 @@ static int msm_comm_get_inst_load(struct msm_vidc_inst *inst,
 		if (!(quirks & LOAD_CALC_IGNORE_TURBO_LOAD))
 			load = inst->core->resources.max_load;
 	}
+
+	if ((is_non_realtime_session(inst)) &&
+		(quirks & LOAD_CALC_IGNORE_NON_REALTIME_LOAD)) {
+		load = msm_comm_get_mbs_per_sec(inst)/inst->prop.fps;
+		dprintk(VIDC_DBG, "NON REALTIME Session so load is: %d", load);
+	} else
+		dprintk(VIDC_DBG, "REALTIME Session so load is: %d", load);
 
 	if (is_non_realtime_session(inst) &&
 		(quirks & LOAD_CALC_IGNORE_NON_REALTIME_LOAD)) {
@@ -576,16 +592,9 @@ static void change_inst_state(struct msm_vidc_inst *inst,
 		return;
 	}
 	mutex_lock(&inst->lock);
-	if (inst->state == MSM_VIDC_CORE_INVALID) {
-		dprintk(VIDC_DBG,
-			"Inst: %pK is in bad state can't change state to %d\n",
-			inst, state);
-		goto exit;
-	}
 	dprintk(VIDC_DBG, "Moved inst: %pK from state: %d to state: %d\n",
 		   inst, inst->state, state);
 	inst->state = state;
-exit:
 	mutex_unlock(&inst->lock);
 }
 
@@ -1269,13 +1278,11 @@ void msm_comm_session_clean(struct msm_vidc_inst *inst)
 	hdev = inst->core->device;
 	mutex_lock(&inst->lock);
 	if (hdev && inst->session) {
+		dprintk(VIDC_DBG, "cleaning up instance: 0x%p\n", inst);
+
 		dprintk(VIDC_DBG, "cleaning up instance: 0x%pK\n", inst);
 		rc = call_hfi_op(hdev, session_clean,
 				(void *) inst->session);
-		if (rc) {
-			dprintk(VIDC_ERR,
-				"Session clean failed :%pK\n", inst);
-		}
 		inst->session = NULL;
 	}
 	mutex_unlock(&inst->lock);
@@ -2572,8 +2579,7 @@ static int msm_vidc_load_resources(int flipped_state,
 	int num_mbs_per_sec = 0;
 	struct msm_vidc_core *core;
 	enum load_calc_quirks quirks = LOAD_CALC_IGNORE_TURBO_LOAD |
-		LOAD_CALC_IGNORE_THUMBNAIL_LOAD |
-		LOAD_CALC_IGNORE_NON_REALTIME_LOAD;
+		LOAD_CALC_IGNORE_THUMBNAIL_LOAD | LOAD_CALC_IGNORE_NON_REALTIME_LOAD;
 
 	if (!inst || !inst->core || !inst->core->device) {
 		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
@@ -4409,9 +4415,7 @@ static int msm_vidc_load_supported(struct msm_vidc_inst *inst)
 {
 	int num_mbs_per_sec = 0;
 	enum load_calc_quirks quirks = LOAD_CALC_IGNORE_TURBO_LOAD |
-		LOAD_CALC_IGNORE_THUMBNAIL_LOAD |
-		LOAD_CALC_IGNORE_NON_REALTIME_LOAD;
-
+		LOAD_CALC_IGNORE_THUMBNAIL_LOAD | LOAD_CALC_IGNORE_NON_REALTIME_LOAD;
 	if (inst->state == MSM_VIDC_OPEN_DONE) {
 		num_mbs_per_sec = msm_comm_get_load(inst->core,
 					MSM_VIDC_DECODER, quirks);

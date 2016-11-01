@@ -50,8 +50,8 @@
 #define __LINUX_V4L2_CONTROLS_H
 
 /* Control classes */
+#define V4L2_CTRL_CLASS_MPEG		0x00990000 	/* MPEG-compression controls */
 #define V4L2_CTRL_CLASS_USER		0x00980000	/* Old-style 'user' controls */
-#define V4L2_CTRL_CLASS_MPEG		0x00990000	/* MPEG-compression controls */
 #define V4L2_CTRL_CLASS_CAMERA		0x009a0000	/* Camera class controls */
 #define V4L2_CTRL_CLASS_FM_TX		0x009b0000	/* FM Modulator control class */
 #define V4L2_CTRL_CLASS_FLASH		0x009c0000	/* Camera flash controls */
@@ -599,7 +599,7 @@ enum v4l2_mpeg_mfc51_video_force_frame_type {
 #define V4L2_CID_MPEG_MFC51_VIDEO_H264_NUM_REF_PIC_FOR_P		(V4L2_CID_MPEG_MFC51_BASE+54)
 
 /*  MPEG-class control IDs specific to the msm_vidc driver */
-#define V4L2_CID_MPEG_MSM_VIDC_BASE		(V4L2_CTRL_CLASS_MPEG | 0x2000)
+#define V4L2_CID_MPEG_MSM_VIDC_BASE	(V4L2_CTRL_CLASS_MPEG | 0x2000)
 
 #define V4L2_CID_MPEG_VIDC_VIDEO_ENABLE_PICTURE_TYPE \
 			(V4L2_CID_MPEG_MSM_VIDC_BASE+0)
@@ -991,6 +991,8 @@ enum v4l2_mpeg_vidc_video_perf_mode {
 	V4L2_MPEG_VIDC_VIDEO_PERF_MAX_QUALITY = 1,
 	V4L2_MPEG_VIDC_VIDEO_PERF_POWER_SAVE = 2
 };
+#define V4L2_CID_MPEG_VIDC_VIDEO_PRIORITY \
+		(V4L2_CID_MPEG_MSM_VIDC_BASE + 73)
 
 #define V4L2_CID_MPEG_VIDC_VIDEO_HIER_B_NUM_LAYERS \
 		(V4L2_CID_MPEG_MSM_VIDC_BASE + 69)
@@ -1004,16 +1006,13 @@ enum v4l2_mpeg_vidc_video_perf_mode {
 #define V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE \
 		(V4L2_CID_MPEG_MSM_VIDC_BASE + 72)
 
-#define V4L2_CID_MPEG_VIDC_VIDEO_PRIORITY \
-		(V4L2_CID_MPEG_MSM_VIDC_BASE + 73)
-
 enum v4l2_mpeg_vidc_video_priority {
 	V4L2_MPEG_VIDC_VIDEO_PRIORITY_REALTIME_ENABLE = 0,
 	V4L2_MPEG_VIDC_VIDEO_PRIORITY_REALTIME_DISABLE = 1,
 };
 
 #define V4L2_CID_MPEG_VIDC_VIDEO_OPERATING_RATE \
-		(V4L2_CID_MPEG_MSM_VIDC_BASE + 75)
+		(V4L2_CID_MPEG_MSM_VIDC_BASE + 74)
 
 #define V4L2_CID_MPEG_VIDC_VIDEO_COLOR_SPACE \
 		(V4L2_CID_MPEG_MSM_VIDC_BASE + 80)
@@ -1039,7 +1038,6 @@ enum v4l2_cid_mpeg_vidc_video_vpe_csc_type_enable {
 	V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_DISABLE  = 0,
 	V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_ENABLE   = 1
 };
-
 /*  Camera class control IDs */
 
 #define V4L2_CID_CAMERA_CLASS_BASE 	(V4L2_CTRL_CLASS_CAMERA | 0x900)

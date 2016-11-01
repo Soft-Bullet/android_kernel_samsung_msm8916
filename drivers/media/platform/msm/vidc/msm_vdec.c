@@ -1,3 +1,4 @@
+
 /* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -225,7 +226,13 @@ static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
 		.name = "Extradata Type",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_MPEG_VIDC_EXTRADATA_NONE,
+
+		.maximum = V4L2_MPEG_VIDC_EXTRADATA_FRAME_BITS_INFO,
+
 		.maximum = V4L2_MPEG_VIDC_EXTRADATA_VPX_COLORSPACE,
+
+		.maximum = V4L2_MPEG_VIDC_EXTRADATA_VPX_COLORSPACE,
+
 		.default_value = V4L2_MPEG_VIDC_EXTRADATA_NONE,
 		.menu_skip_mask = ~(
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_NONE) |
@@ -772,14 +779,6 @@ int msm_vdec_prepare_buf(struct msm_vidc_inst *inst,
 	}
 	hdev = inst->core->device;
 
-	if (inst->state == MSM_VIDC_CORE_INVALID ||
-			inst->core->state == VIDC_CORE_INVALID) {
-		dprintk(VIDC_ERR,
-			"Core %pK in bad state, ignoring prepare buf\n",
-				inst->core);
-		goto exit;
-	}
-
 	switch (b->type) {
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
 		break;
@@ -830,7 +829,6 @@ int msm_vdec_prepare_buf(struct msm_vidc_inst *inst,
 		dprintk(VIDC_ERR, "Buffer type not recognized: %d\n", b->type);
 		break;
 	}
-exit:
 	return rc;
 }
 
@@ -1342,11 +1340,14 @@ int msm_vdec_s_fmt(struct msm_vidc_inst *inst, struct v4l2_format *f)
 	int ret = 0;
 	int i;
 	int max_input_size = 0;
+	struct hfi_device *hdev;
 
-	if (!inst || !f) {
+	if (!inst || !f || !inst->core || !inst->core->device) {
 		dprintk(VIDC_ERR, "%s invalid parameters\n", __func__);
 		return -EINVAL;
 	}
+
+	hdev = inst->core->device;
 
 	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		fmt = msm_comm_get_pixel_fmt_fourcc(vdec_formats,

@@ -977,6 +977,7 @@ int create_pkt_cmd_session_set_property(
 		 */
 		hfi->enable = !(((struct hfi_enable *) pdata)->enable);
 		pkt->size += sizeof(u32) * 2;
+		dprintk(VIDC_DBG, "Setting Final Priority to %d\n", hfi->enable);
 		break;
 	}
 	case HAL_PARAM_BUFFER_COUNT_ACTUAL:

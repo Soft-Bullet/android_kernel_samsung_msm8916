@@ -121,7 +121,6 @@ struct msm_vidc_s3d_frame_packing_payload {
 	unsigned int fpa_repetition_period;
 	unsigned int fpa_extension_flag;
 };
-
 struct msm_vidc_vpx_colorspace_payload {
 	unsigned int color_space;
 	unsigned int yuv_range_flag;
@@ -159,7 +158,6 @@ struct msm_vidc_vui_display_info_payload {
 	unsigned int chroma_sample_loc_type_top_field;
 	unsigned int chroma_sample_loc_type_bottom_field;
 };
-
 enum msm_vidc_extradata_type {
 	MSM_VIDC_EXTRADATA_NONE = 0x00000000,
 	MSM_VIDC_EXTRADATA_MB_QUANTIZATION = 0x00000001,
