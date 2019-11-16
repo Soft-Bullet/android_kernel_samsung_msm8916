@@ -192,10 +192,6 @@ void start_bandwidth_timer(struct hrtimer *period_timer, ktime_t period)
 DEFINE_MUTEX(sched_domains_mutex);
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 
-#ifdef CONFIG_INTELLI_PLUG
-DEFINE_PER_CPU_SHARED_ALIGNED(struct nr_stats_s, runqueue_stats);
-#endif
-
 static void update_rq_clock_task(struct rq *rq, s64 delta);
 
 void update_rq_clock(struct rq *rq)
@@ -646,44 +642,6 @@ void wake_up_q(struct wake_q_head *head)
  * the target CPU.
  */
 #ifdef CONFIG_SMP
-
-#ifndef tsk_is_polling
-#define tsk_is_polling(t) test_tsk_thread_flag(t, TIF_POLLING_NRFLAG)
-#endif
-
-/*
- *  * cmpxchg based fetch_or, macro so it works for different integer types
- *   */
-#define fetch_or(ptr, val)						\
-({	typeof(*(ptr)) __old, __val = *(ptr);				\
-	for (;;) {							\
-		__old = cmpxchg((ptr), __val, __val | (val));		\
-		if (__old == __val)					\
-			break;						\
-		__val = __old;						\
-	}								\
-	__old;								\
-})
-
-#ifdef TIF_POLLING_NRFLAG
-/*
- *  * Atomically set TIF_NEED_RESCHED and test for TIF_POLLING_NRFLAG,
- *   * this avoids any races wrt polling state changes and thereby avoids
- *    * spurious IPIs.
- *     */
-static bool set_nr_and_not_polling(struct task_struct *p)
-{
-	struct thread_info *ti = task_thread_info(p);
-	return !(fetch_or(&ti->flags, _TIF_NEED_RESCHED) & _TIF_POLLING_NRFLAG);
-}
-#else
-static bool set_nr_and_not_polling(struct task_struct *p)
-{
-	set_tsk_need_resched(p);
-	return true;
-}
-#endif
-
 void resched_task(struct task_struct *p)
 {
 	int cpu;
@@ -693,14 +651,15 @@ void resched_task(struct task_struct *p)
 	if (test_tsk_need_resched(p))
 		return;
 
+	set_tsk_need_resched(p);
+
 	cpu = task_cpu(p);
-
-	if (cpu == smp_processor_id()) {
-		set_tsk_need_resched(p);
+	if (cpu == smp_processor_id())
 		return;
-	}
 
-	if (set_nr_and_not_polling(p))
+	/* NEED_RESCHED must be visible before we test polling */
+	smp_mb();
+	if (!tsk_is_polling(p))
 		smp_send_reschedule(cpu);
 }
 
@@ -760,7 +719,26 @@ static void wake_up_idle_cpu(int cpu)
 	if (cpu == smp_processor_id())
 		return;
 
-	if (set_nr_and_not_polling(rq->idle))
+	/*
+	 * This is safe, as this function is called with the timer
+	 * wheel base lock of (cpu) held. When the CPU is on the way
+	 * to idle and has not yet set rq->curr to idle then it will
+	 * be serialized on the timer wheel base lock and take the new
+	 * timer into account automatically.
+	 */
+	if (rq->curr != rq->idle)
+		return;
+
+	/*
+	 * We can set TIF_RESCHED on the idle task of the other CPU
+	 * lockless. The worst case is that the other CPU runs the
+	 * idle task through an additional NOOP schedule()
+	 */
+	set_tsk_need_resched(rq->idle);
+
+	/* NEED_RESCHED must be visible before we test polling */
+	smp_mb();
+	if (!tsk_is_polling(rq->idle))
 		smp_send_reschedule(cpu);
 }
 
@@ -3460,10 +3438,6 @@ static void __sched_fork(struct task_struct *p)
 	memset(&p->se.statistics, 0, sizeof(p->se.statistics));
 #endif
 
-#ifdef CONFIG_CPU_FREQ_STAT
-	cpufreq_task_stats_init(p);
-#endif
-
 	INIT_LIST_HEAD(&p->rt.run_list);
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
@@ -3939,61 +3913,6 @@ unsigned long this_cpu_load(void)
 }
 
 
-#ifdef CONFIG_INTELLI_PLUG
-unsigned long avg_nr_running(void)
-{
-	unsigned long i, sum = 0;
-	unsigned int seqcnt, ave_nr_running;
-
-	for_each_online_cpu(i) {
-		struct nr_stats_s *stats = &per_cpu(runqueue_stats, i);
-		struct rq *q = cpu_rq(i);
-
-		/*
-		 * Update average to avoid reading stalled value if there were
-		 * no run-queue changes for a long time. On the other hand if
-		 * the changes are happening right now, just read current value
-		 * directly.
-		 */
-		seqcnt = read_seqcount_begin(&stats->ave_seqcnt);
-		ave_nr_running = do_avg_nr_running(q);
-		if (read_seqcount_retry(&stats->ave_seqcnt, seqcnt)) {
-			read_seqcount_begin(&stats->ave_seqcnt);
-			ave_nr_running = stats->ave_nr_running;
-		}
-
-		sum += ave_nr_running;
-	}
-
-	return sum;
-}
-EXPORT_SYMBOL(avg_nr_running);
-
-unsigned long avg_cpu_nr_running(unsigned int cpu)
-{
-	unsigned int seqcnt, ave_nr_running;
-
-	struct nr_stats_s *stats = &per_cpu(runqueue_stats, cpu);
-	struct rq *q = cpu_rq(cpu);
-
-	/*
-	 * Update average to avoid reading stalled value if there were
-	 * no run-queue changes for a long time. On the other hand if
-	 * the changes are happening right now, just read current value
-	 * directly.
-	 */
-	seqcnt = read_seqcount_begin(&stats->ave_seqcnt);
-	ave_nr_running = do_avg_nr_running(q);
-	if (read_seqcount_retry(&stats->ave_seqcnt, seqcnt)) {
-		read_seqcount_begin(&stats->ave_seqcnt);
-		ave_nr_running = stats->ave_nr_running;
-	}
-
-	return ave_nr_running;
-}
-EXPORT_SYMBOL(avg_cpu_nr_running);
-#endif
-
 /*
  * Global load-average calculations
  *
@@ -4083,13 +4002,10 @@ static long calc_load_fold_active(struct rq *this_rq)
 static unsigned long
 calc_load(unsigned long load, unsigned long exp, unsigned long active)
 {
-	unsigned long newload;
-
-	newload = load * exp + active * (FIXED_1 - exp);
-	if (active >= load)
-		newload += FIXED_1-1;
-
-	return newload / FIXED_1;
+	load *= exp;
+	load += active * (FIXED_1 - exp);
+	load += 1UL << (FSHIFT - 1);
+	return load >> FSHIFT;
 }
 
 #ifdef CONFIG_NO_HZ_COMMON
@@ -4642,20 +4558,6 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 	struct rq *rq;
 	u64 ns = 0;
 
-#if defined(CONFIG_64BIT) && defined(CONFIG_SMP)
-	/*
-	 * 64-bit doesn't need locks to atomically read a 64bit value.
-	 * So we have a optimization chance when the task's delta_exec is 0.
-	 * Reading ->on_cpu is racy, but this is ok.
-	 *
-	 * If we race with it leaving cpu, we'll take a lock. So we're correct.
-	 * If we race with it entering cpu, unaccounted time is 0. This is
-	 * indistinguishable from the read occurring a few cycles earlier.
-	 */
-	if (!p->on_cpu)
-		return p->se.sum_exec_runtime;
-#endif
-
 	rq = task_rq_lock(p, &flags);
 	ns = p->se.sum_exec_runtime + do_task_delta_exec(p, rq);
 	task_rq_unlock(rq, p, &flags);
@@ -4892,6 +4794,9 @@ pick_next_task(struct rq *rq)
 static void __sched __schedule(void)
 {
 	struct task_struct *prev, *next;
+#ifdef CONFIG_TASK_CPUFREQ_STATS
+	struct task_struct *parent;
+#endif
 	unsigned long *switch_count;
 	struct rq *rq;
 	int cpu;
@@ -4955,7 +4860,15 @@ need_resched:
 	wallclock = sched_clock();
 	update_task_ravg(prev, rq, PUT_PREV_TASK, wallclock, 0);
 	update_task_ravg(next, rq, PICK_NEXT_TASK, wallclock, 0);
-	clear_tsk_need_resched(prev);
+#ifdef CONFIG_TASK_CPUFREQ_STATS
+	parent = prev;
+	if (prev->pid != prev->tgid) {
+		parent = find_task_by_vpid(prev->tgid);
+	}
+	task_update_cumulative_time_in_state(prev, parent, cpu_of(rq));
+	task_update_time_in_state(next, cpu_of(rq));
+#endif
+        clear_tsk_need_resched(prev);
 	rq->skip_clock_update = 0;
 
 	BUG_ON(task_cpu(next) != cpu_of(rq));
@@ -6859,7 +6772,7 @@ void show_state_filter(unsigned long state_filter)
 		"  task                        PC stack   pid father\n");
 #endif
 	rcu_read_lock();
-	for_each_process_thread(g, p) {
+	do_each_thread(g, p) {
 		/*
 		 * reset the NMI-timeout, listing all files on a slow
 		 * console might take a lot of time:
@@ -6867,7 +6780,7 @@ void show_state_filter(unsigned long state_filter)
 		touch_nmi_watchdog();
 		if (!state_filter || (p->state & state_filter))
 			sched_show_task(p);
-	}
+	} while_each_thread(g, p);
 
 	touch_all_softlockup_watchdogs();
 
@@ -7038,13 +6951,8 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
 	bool moved = false;
 	int ret = 0;
 
-	if (p->flags & PF_KTHREAD) {
-		if (unlikely(!cpu_online(dest_cpu)))
-			return ret;
-	} else {
-		if (unlikely(!cpu_active(dest_cpu)))
-			return ret;
-	}
+	if (unlikely(!cpu_active(dest_cpu)))
+		return ret;
 
 	rq_src = cpu_rq(src_cpu);
 	rq_dest = cpu_rq(dest_cpu);
@@ -7063,9 +6971,9 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
 	 * placed properly.
 	 */
 	if (p->on_rq) {
-		dequeue_task(rq_src, p, DEQUEUE_MIGRATING);
+		dequeue_task(rq_src, p, 0);
 		set_task_cpu(p, dest_cpu);
-		enqueue_task(rq_dest, p, ENQUEUE_MIGRATING);
+		enqueue_task(rq_dest, p, 0);
 		check_preempt_curr(rq_dest, p, 0);
 		moved = true;
 	}
@@ -9416,7 +9324,7 @@ void normalize_rt_tasks(void)
 	struct rq *rq;
 
 	read_lock_irqsave(&tasklist_lock, flags);
-	for_each_process_thread(g, p) {
+	do_each_thread(g, p) {
 		/*
 		 * Only normalize user tasks:
 		 */
@@ -9447,7 +9355,8 @@ void normalize_rt_tasks(void)
 
 		__task_rq_unlock(rq);
 		raw_spin_unlock(&p->pi_lock);
-	}
+	} while_each_thread(g, p);
+
 	read_unlock_irqrestore(&tasklist_lock, flags);
 }
 
@@ -9643,10 +9552,10 @@ static inline int tg_has_rt_tasks(struct task_group *tg)
 {
 	struct task_struct *g, *p;
 
-	for_each_process_thread(g, p) {
+	do_each_thread(g, p) {
 		if (rt_task(p) && task_rq(p)->rt.tg == tg)
 			return 1;
-	}
+	} while_each_thread(g, p);
 
 	return 0;
 }
@@ -10362,6 +10271,7 @@ struct cgroup_subsys cpu_cgroup_subsys = {
 	.css_offline	= cpu_cgroup_css_offline,
 	.can_attach	= cpu_cgroup_can_attach,
 	.attach		= cpu_cgroup_attach,
+	.allow_attach	= subsys_cgroup_allow_attach,
 	.exit		= cpu_cgroup_exit,
 	.subsys_id	= cpu_cgroup_subsys_id,
 	.base_cftypes	= cpu_files,

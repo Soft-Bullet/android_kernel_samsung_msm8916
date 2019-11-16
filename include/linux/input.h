@@ -200,6 +200,10 @@ struct input_dev {
 };
 #define to_input_dev(d) container_of(d, struct input_dev, dev)
 
+#ifndef CONFIG_CPU_FREQ_LIMIT_USERSPACE
+#define DVFS_TOUCH_ID	0
+#endif
+
 /*
  * Verify that we are in sync with input_device_id mod_devicetable.h #defines
  */

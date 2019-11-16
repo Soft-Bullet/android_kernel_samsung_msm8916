@@ -781,9 +781,8 @@ asmlinkage long compat_sys_mount(const char __user * dev_name,
 	struct filename *dir;
 	int retval;
 
-	kernel_type = copy_mount_string(type);
-	retval = PTR_ERR(kernel_type);
-	if (IS_ERR(kernel_type))
+	retval = copy_mount_string(type, &kernel_type);
+	if (retval < 0)
 		goto out;
 
 	dir = getname(dir_name);
@@ -791,9 +790,8 @@ asmlinkage long compat_sys_mount(const char __user * dev_name,
 	if (IS_ERR(dir))
 		goto out1;
 
-	kernel_dev = copy_mount_string(dev_name);
-	retval = PTR_ERR(kernel_dev);
-	if (IS_ERR(kernel_dev))
+	retval = copy_mount_string(dev_name, &kernel_dev);
+	if (retval < 0)
 		goto out2;
 
 	retval = copy_mount_options(data, &data_page);

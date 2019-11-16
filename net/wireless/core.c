@@ -313,7 +313,6 @@ struct wiphy *wiphy_new(const struct cfg80211_ops *ops, int sizeof_priv)
 
 	struct cfg80211_registered_device *rdev;
 	int alloc_size;
-	int rv;
 
 	WARN_ON(ops->add_key && (!ops->del_key || !ops->set_default_key));
 	WARN_ON(ops->auth && (!ops->assoc || !ops->deauth || !ops->disassoc));
@@ -347,11 +346,7 @@ struct wiphy *wiphy_new(const struct cfg80211_ops *ops, int sizeof_priv)
 	mutex_unlock(&cfg80211_mutex);
 
 	/* give it a proper name */
-	rv = dev_set_name(&rdev->wiphy.dev, PHY_NAME "%d", rdev->wiphy_idx);
-	if (rv < 0) {
-		kfree(rdev);
-		return NULL;
-	}
+	dev_set_name(&rdev->wiphy.dev, PHY_NAME "%d", rdev->wiphy_idx);
 
 	mutex_init(&rdev->mtx);
 	mutex_init(&rdev->devlist_mtx);

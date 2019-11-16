@@ -380,9 +380,6 @@ struct root_domain {
 	cpumask_var_t span;
 	cpumask_var_t online;
 
-	/* Indicate more than one runnable task for any CPU */
-	bool overload;
-
 	/*
 	 * The "RT overload" flag: it gets set if a CPU has more than
 	 * one runnable RT task.
@@ -581,27 +578,6 @@ DECLARE_PER_CPU(struct rq, runqueues);
 #define cpu_curr(cpu)		(cpu_rq(cpu)->curr)
 #define raw_rq()		(&__raw_get_cpu_var(runqueues))
 
-#ifdef CONFIG_INTELLI_PLUG
-struct nr_stats_s {
-	/* time-based average load */
-	u64 nr_last_stamp;
-	unsigned int ave_nr_running;
-	seqcount_t ave_seqcnt;
-};
-
-/* 27 ~= 134217728ns = 134.2ms
- * 26 ~=  67108864ns =  67.1ms
- * 25 ~=  33554432ns =  33.5ms
- * 24 ~=  16777216ns =  16.8ms
- */
-#define NR_AVE_PERIOD_EXP	27
-#define NR_AVE_SCALE(x)		((x) << FSHIFT)
-#define NR_AVE_PERIOD		(1 << NR_AVE_PERIOD_EXP)
-#define NR_AVE_DIV_PERIOD(x)	((x) >> NR_AVE_PERIOD_EXP)
-
-DECLARE_PER_CPU(struct nr_stats_s, runqueue_stats);
-#endif
-
 #ifdef CONFIG_SMP
 
 #define rcu_dereference_check_sched_domain(p) \
@@ -765,10 +741,8 @@ static inline u64 scale_load_to_cpu(u64 task_load, int cpu)
 {
 	struct rq *rq = cpu_rq(cpu);
 
-	if (rq->load_scale_factor != 1024) {
-		task_load *= (u64)rq->load_scale_factor;
-		task_load /= 1024;
-	}
+	task_load *= (u64)rq->load_scale_factor;
+	task_load /= 1024;
 
 	return task_load;
 }
@@ -1248,10 +1222,8 @@ static const u32 prio_to_wmult[40] = {
 #else
 #define ENQUEUE_WAKING		0
 #endif
-#define ENQUEUE_MIGRATING	8
 
 #define DEQUEUE_SLEEP		1
-#define DEQUEUE_MIGRATING	2
 
 struct sched_class {
 	const struct sched_class *next;
@@ -1362,76 +1334,26 @@ static inline u64 steal_ticks(u64 steal)
 }
 #endif
 
-#ifdef CONFIG_INTELLI_PLUG
-static inline unsigned int do_avg_nr_running(struct rq *rq)
-{
-
-	struct nr_stats_s *nr_stats = &per_cpu(runqueue_stats, rq->cpu);
-	unsigned int ave_nr_running = nr_stats->ave_nr_running;
-	s64 nr, deltax;
-
-	deltax = rq->clock_task - nr_stats->nr_last_stamp;
-	nr = NR_AVE_SCALE(rq->nr_running);
-
-	if (deltax > NR_AVE_PERIOD)
-		ave_nr_running = nr;
-	else
-		ave_nr_running +=
-			NR_AVE_DIV_PERIOD(deltax * (nr - ave_nr_running));
-
-	return ave_nr_running;
-}
-#endif
-
 static inline void inc_nr_running(struct rq *rq)
 {
-#ifdef CONFIG_INTELLI_PLUG
-	struct nr_stats_s *nr_stats = &per_cpu(runqueue_stats, rq->cpu);
-#endif
-
 	sched_update_nr_prod(cpu_of(rq), 1, true);
-#ifdef CONFIG_INTELLI_PLUG
-	write_seqcount_begin(&nr_stats->ave_seqcnt);
-	nr_stats->ave_nr_running = do_avg_nr_running(rq);
-	nr_stats->nr_last_stamp = rq->clock_task;
-#endif
 	rq->nr_running++;
 
-	if (rq->nr_running == 2) {
-#ifdef CONFIG_SMP
-		if (!rq->rd->overload)
-			rq->rd->overload = true;
-#endif
-
 #ifdef CONFIG_NO_HZ_FULL
+	if (rq->nr_running == 2) {
 		if (tick_nohz_full_cpu(rq->cpu)) {
 			/* Order rq->nr_running write against the IPI */
 			smp_wmb();
 			smp_send_reschedule(rq->cpu);
 		}
-#endif
-	}
-#ifdef CONFIG_INTELLI_PLUG
-	write_seqcount_end(&nr_stats->ave_seqcnt);
+       }
 #endif
 }
 
 static inline void dec_nr_running(struct rq *rq)
 {
-#ifdef CONFIG_INTELLI_PLUG
-	struct nr_stats_s *nr_stats = &per_cpu(runqueue_stats, rq->cpu);
-#endif
-
 	sched_update_nr_prod(cpu_of(rq), 1, false);
-#ifdef CONFIG_INTELLI_PLUG
-	write_seqcount_begin(&nr_stats->ave_seqcnt);
-	nr_stats->ave_nr_running = do_avg_nr_running(rq);
-	nr_stats->nr_last_stamp = rq->clock_task;
-#endif
 	rq->nr_running--;
-#ifdef CONFIG_INTELLI_PLUG
-	write_seqcount_end(&nr_stats->ave_seqcnt);
-#endif
 }
 
 static inline void rq_last_tick_reset(struct rq *rq)

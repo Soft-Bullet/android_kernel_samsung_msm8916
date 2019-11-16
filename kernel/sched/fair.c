@@ -727,40 +727,27 @@ static void update_curr(struct cfs_rq *cfs_rq)
 }
 
 static inline void
-update_stats_wait_start(struct cfs_rq *cfs_rq, struct sched_entity *se,
-			bool migrating)
+update_stats_wait_start(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	schedstat_set(se->statistics.wait_start,
-		      migrating &&
-		      likely(rq_of(cfs_rq)->clock > se->statistics.wait_start) ?
-		      rq_of(cfs_rq)->clock - se->statistics.wait_start :
-		      rq_of(cfs_rq)->clock);
+	schedstat_set(se->statistics.wait_start, rq_of(cfs_rq)->clock);
 }
 
 /*
  * Task is being enqueued - update stats:
  */
-static void update_stats_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se,
-				 bool migrating)
+static void update_stats_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	/*
 	 * Are we enqueueing a waiting task? (for current tasks
 	 * a dequeue/enqueue event is a NOP)
 	 */
 	if (se != cfs_rq->curr)
-		update_stats_wait_start(cfs_rq, se, migrating);
+		update_stats_wait_start(cfs_rq, se);
 }
 
 static void
-update_stats_wait_end(struct cfs_rq *cfs_rq, struct sched_entity *se,
-		      bool migrating)
+update_stats_wait_end(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	if (migrating) {
-		schedstat_set(se->statistics.wait_start,
-			      rq_of(cfs_rq)->clock - se->statistics.wait_start);
-		return;
-	}
-
 	schedstat_set(se->statistics.wait_max, max(se->statistics.wait_max,
 			rq_of(cfs_rq)->clock - se->statistics.wait_start));
 	schedstat_set(se->statistics.wait_count, se->statistics.wait_count + 1);
@@ -776,15 +763,14 @@ update_stats_wait_end(struct cfs_rq *cfs_rq, struct sched_entity *se,
 }
 
 static inline void
-update_stats_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se,
-		     bool migrating)
+update_stats_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	/*
 	 * Mark the end of the wait period if dequeueing a
 	 * waiting task:
 	 */
 	if (se != cfs_rq->curr)
-		update_stats_wait_end(cfs_rq, se, migrating);
+		update_stats_wait_end(cfs_rq, se);
 }
 
 /*
@@ -2700,13 +2686,13 @@ static inline u64 __synchronize_entity_decay(struct sched_entity *se)
 	u64 decays = atomic64_read(&cfs_rq->decay_counter);
 
 	decays -= se->avg.decay_count;
-	se->avg.decay_count = 0;
 	if (!decays) {
 		se->avg.decay_count = 0;
 		return 0;
 	}
 
 	se->avg.load_avg_contrib = decay_load(se->avg.load_avg_contrib, decays);
+	se->avg.decay_count = 0;
 
 	return decays;
 }
@@ -3203,7 +3189,7 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 		enqueue_sleeper(cfs_rq, se);
 	}
 
-	update_stats_enqueue(cfs_rq, se, !!(flags & ENQUEUE_MIGRATING));
+	update_stats_enqueue(cfs_rq, se);
 	check_spread(cfs_rq, se);
 	if (se != cfs_rq->curr)
 		__enqueue_entity(cfs_rq, se);
@@ -3271,7 +3257,7 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	update_curr(cfs_rq);
 	dequeue_entity_load_avg(cfs_rq, se, flags & DEQUEUE_SLEEP);
 
-	update_stats_dequeue(cfs_rq, se, !!(flags & DEQUEUE_MIGRATING));
+	update_stats_dequeue(cfs_rq, se);
 	if (flags & DEQUEUE_SLEEP) {
 #ifdef CONFIG_SCHEDSTATS
 		if (entity_is_task(se)) {
@@ -3357,7 +3343,7 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		 * a CPU. So account for the time it spent waiting on the
 		 * runqueue.
 		 */
-		update_stats_wait_end(cfs_rq, se, false);
+		update_stats_wait_end(cfs_rq, se);
 		__dequeue_entity(cfs_rq, se);
 	}
 
@@ -3435,7 +3421,7 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 
 	check_spread(cfs_rq, prev);
 	if (prev->on_rq) {
-		update_stats_wait_start(cfs_rq, prev, false);
+		update_stats_wait_start(cfs_rq, prev);
 		/* Put 'current' back into the tree. */
 		__enqueue_entity(cfs_rq, prev);
 		/* in !on_rq case, update occurred at dequeue */
@@ -5384,9 +5370,9 @@ static DEFINE_PER_CPU(int, dbs_boost_load_moved);
  */
 static void move_task(struct task_struct *p, struct lb_env *env)
 {
-	deactivate_task(env->src_rq, p, DEQUEUE_MIGRATING);
+	deactivate_task(env->src_rq, p, 0);
 	set_task_cpu(p, env->dst_cpu);
-	activate_task(env->dst_rq, p, ENQUEUE_MIGRATING);
+	activate_task(env->dst_rq, p, 0);
 	check_preempt_curr(env->dst_rq, p, 0);
 	if (task_notify_on_migrate(p))
 		per_cpu(dbs_boost_needed, env->dst_cpu) = true;
@@ -5563,13 +5549,6 @@ static int move_tasks(struct lb_env *env)
 
 redo:
 	while (!list_empty(tasks)) {
-		/*
-		 * We don't want to steal all, otherwise we may be treated likewise,
-		 * which could at worst lead to a livelock crash.
-		 */
-		if (env->idle != CPU_NOT_IDLE && env->src_rq->nr_running <= 1)
-			break;
-
 		p = list_first_entry(tasks, struct task_struct, se.group_node);
 
 		env->loop++;
@@ -6042,8 +6021,7 @@ fix_small_capacity(struct sched_domain *sd, struct sched_group *group)
  */
 static inline void update_sg_lb_stats(struct lb_env *env,
 			struct sched_group *group, int load_idx,
-			int local_group, int *balance, struct sg_lb_stats *sgs,
-			bool *overload)
+			int local_group, int *balance, struct sg_lb_stats *sgs)
 {
 	unsigned long nr_running, max_nr_running, min_nr_running;
 	unsigned long load, max_cpu_load, min_cpu_load;
@@ -6097,9 +6075,6 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 		sgs->sum_nr_small_tasks += rq->nr_small_tasks;
 		sgs->group_cpu_load += cpu_load(i);
 #endif
-
-		if (nr_running > 1) *overload = true;
-
 		sgs->sum_weighted_load += weighted_cpuload(i);
 		if (idle_cpu(i))
 			sgs->idle_cpus++;
@@ -6227,7 +6202,6 @@ static inline void update_sd_lb_stats(struct lb_env *env,
 	struct sched_group *sg = env->sd->groups;
 	struct sg_lb_stats sgs;
 	int load_idx, prefer_sibling = 0;
-	bool overload = false;
 
 	if (child && child->flags & SD_PREFER_SIBLING)
 		prefer_sibling = 1;
@@ -6239,8 +6213,7 @@ static inline void update_sd_lb_stats(struct lb_env *env,
 
 		local_group = cpumask_test_cpu(env->dst_cpu, sched_group_cpus(sg));
 		memset(&sgs, 0, sizeof(sgs));
-		update_sg_lb_stats(env, sg, load_idx, local_group, balance, &sgs,
-						&overload);
+		update_sg_lb_stats(env, sg, load_idx, local_group, balance, &sgs);
 
 		if (local_group && !(*balance))
 			return;
@@ -6288,13 +6261,6 @@ static inline void update_sd_lb_stats(struct lb_env *env,
 
 		sg = sg->next;
 	} while (sg != env->sd->groups);
-
-	if (!env->sd->parent) {
-		/* update overload indicator if we are at root domain */
-		if (env->dst_rq->rd->overload != overload)
-			env->dst_rq->rd->overload = overload;
-	}
-
 }
 
 /**
@@ -6980,8 +6946,7 @@ void idle_balance(int this_cpu, struct rq *this_rq)
 
 	this_rq->idle_stamp = this_rq->clock;
 
-	if (this_rq->avg_idle < sysctl_sched_migration_cost ||
-	    !this_rq->rd->overload)
+	if (this_rq->avg_idle < sysctl_sched_migration_cost)
 		return;
 
 	/* If this CPU is not the most power-efficient idle CPU in the

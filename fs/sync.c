@@ -86,12 +86,7 @@ static void fdatawrite_one_bdev(struct block_device *bdev, void *arg)
 
 static void fdatawait_one_bdev(struct block_device *bdev, void *arg)
 {
-	/*
-	 * We keep the error status of individual mapping so that
-	 * applications can catch the writeback error using fsync(2).
-	 * See filemap_fdatawait_keep_errors() for details.
-	 */
-	filemap_fdatawait_keep_errors(bdev->bd_inode->i_mapping);
+	filemap_fdatawait(bdev->bd_inode->i_mapping);
 }
 
 /*
@@ -210,7 +205,6 @@ static int do_fsync(unsigned int fd, int datasync)
 	if (f.file) {
 		ret = vfs_fsync(f.file, datasync);
 		fdput(f);
-		inc_syscfs(current);
 	}
 	return ret;
 }

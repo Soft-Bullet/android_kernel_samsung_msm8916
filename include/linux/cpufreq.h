@@ -11,7 +11,6 @@
 #ifndef _LINUX_CPUFREQ_H
 #define _LINUX_CPUFREQ_H
 
-#include <linux/pid_namespace.h>
 #include <linux/cpumask.h>
 #include <linux/completion.h>
 #include <linux/kobject.h>
@@ -159,13 +158,57 @@ static inline unsigned int cpufreq_quick_get_max(unsigned int cpu)
 static inline void disable_cpufreq(void) { }
 #endif
 
+#if defined (CONFIG_CPU_FREQ_LIMIT_USERSPACE)
+enum {
+	BOOT_CPU = 0,
+};
+
+#define MIN_TOUCH_LOW_LIMIT	1497600
+#define MIN_TOUCH_HIGH_LIMIT	2457600
+#define MIN_CAMERA_LIMIT	998400
+
+#if defined(CONFIG_ARCH_MSM8939)
+#define MIN_TOUCH_LIMIT         556600
+#define MIN_TOUCH_LIMIT_SECOND  499200
+#elif defined(CONFIG_ARCH_MSM8929)
+#define MIN_TOUCH_LIMIT         533333
+#define MIN_TOUCH_LIMIT_SECOND  499200
+#elif defined(CONFIG_ARCH_MSM8916)
+#define MIN_TOUCH_LIMIT		1190400
+#define MIN_TOUCH_LIMIT_SECOND	998400
+#else
+#define MIN_TOUCH_LIMIT		1728000
+#define MIN_TOUCH_LIMIT_SECOND	1190400
+#endif
+
+enum {
+	DVFS_NO_ID			= 0,
+
+	/* need to update now */
+	DVFS_TOUCH_ID			= 0x00000001,
+	DVFS_APPS_MIN_ID		= 0x00000002,
+	DVFS_APPS_MAX_ID		= 0x00000004,
+	DVFS_UNICPU_ID			= 0x00000008,
+	DVFS_LTETP_ID			= 0x00000010,
+	DVFS_CAMERA_ID			= 0x00000012,
+	DVFS_FINGER_ID			= 0x00000014,
+
+	/* DO NOT UPDATE NOW */
+	DVFS_THERMALD_ID		= 0x00000100,
+
+	DVFS_MAX_ID
+};
+
+
+int set_freq_limit(unsigned long id, unsigned int freq);
+#endif
+
 /*********************************************************************
  *                      CPUFREQ DRIVER INTERFACE                     *
  *********************************************************************/
 
 #define CPUFREQ_RELATION_L 0  /* lowest frequency at or above target */
 #define CPUFREQ_RELATION_H 1  /* highest frequency below or at target */
-#define CPUFREQ_RELATION_C 2  /* closest frequency to target */
 
 struct freq_attr {
 	struct attribute attr;
@@ -205,7 +248,6 @@ __ATTR(_name, 0644, show_##_name, store_##_name)
 struct cpufreq_driver {
 	char			name[CPUFREQ_NAME_LEN];
 	u8			flags;
-	void			*driver_data;
 
 	/* needed by all drivers */
 	int	(*init)		(struct cpufreq_policy *policy);
@@ -260,7 +302,6 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data);
 int cpufreq_unregister_driver(struct cpufreq_driver *driver_data);
 
 const char *cpufreq_get_current_driver(void);
-void *cpufreq_get_driver_data(void);
 
 static inline void cpufreq_verify_within_limits(struct cpufreq_policy *policy,
 		unsigned int min, unsigned int max)
@@ -436,18 +477,6 @@ extern struct cpufreq_governor cpufreq_gov_conservative;
 #elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_INTERACTIVE)
 extern struct cpufreq_governor cpufreq_gov_interactive;
 #define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_interactive)
-#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_RELAXED)
-extern struct cpufreq_governor cpufreq_gov_relaxed;
-#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_relaxed)
-#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_BLU_ACTIVE)
-extern struct cpufreq_governor cpufreq_gov_blu_active;
-#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_blu_active)
-#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_BIOSHOCK)
-extern struct cpufreq_governor cpufreq_gov_bioshock;
-#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_bioshock)
-#elif defined(CONFIG_CPU_FREQ_DEFAULT_GOV_LIONFISH)
-extern struct cpufreq_governor cpufreq_gov_lionfish;
-#define CPUFREQ_DEFAULT_GOVERNOR	(&cpufreq_gov_lionfish)
 #endif
 
 /*********************************************************************
@@ -511,11 +540,13 @@ static inline void acct_update_power(struct task_struct *p, cputime_t cputime) {
 #endif
 #define MIN_FINGER_LIMIT 1344000
 
-void cpufreq_task_stats_init(struct task_struct *p);
-void cpufreq_task_stats_exit(struct task_struct *p);
-void cpufreq_task_stats_remove_uids(uid_t uid_start, uid_t uid_end);
-int  proc_time_in_state_show(struct seq_file *m, struct pid_namespace *ns,
-	struct pid *pid, struct task_struct *p);
-
-
+#ifdef CONFIG_TASK_CPUFREQ_STATS
+void update_time_in_state(struct task_struct *p, int cpu);
+void update_cumulative_time_in_state(struct task_struct *p,
+				     struct task_struct *parent,
+				     int cpu);
+int cpufreq_stats_get_max_state(int cpu);
+void update_freq_table(unsigned int* freq_table, int cpu,
+		       unsigned int max_state);
+#endif
 #endif /* _LINUX_CPUFREQ_H */
