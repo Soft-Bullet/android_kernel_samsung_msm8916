@@ -5440,7 +5440,7 @@ static int mms_ts_input_open(struct input_dev *dev)
 		return 0;
 	}
 
-	dev_info(&info->client->dev, "%s, v:0x%02x, g:%d\n", __func__, info->fw_ic_ver, info->glove_mode);
+	dev_info(&info->client->dev, "%s, v:0x%02x, g:%d\n", __func__, info->fw_ic_ver, info->noise_mode);
 
 #ifdef TSP_GESTURE_MODE
 	if(info->lowpower_mode){		

@@ -81,6 +81,7 @@
 		battery,recharging_total_time = <5400>;
 		battery,charging_reset_time = <0>;
                 qcom,sec-battery-vadc = <&pm8916_vadc>;
+		battery,swelling_low_chg_current = <1100>;
 
 		charger{
 			status = "disable";
