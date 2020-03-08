@@ -1630,6 +1630,7 @@ int file_remove_suid(struct file *file)
 		error = __remove_suid(file->f_path.mnt, dentry, killsuid);
 	if (!error && (inode->i_sb->s_flags & MS_NOSEC))
 		inode->i_flags |= S_NOSEC;
+=======
 
 	return error;
 }

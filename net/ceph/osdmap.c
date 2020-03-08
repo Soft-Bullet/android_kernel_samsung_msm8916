@@ -89,7 +89,7 @@ static int crush_decode_tree_bucket(void **p, void *end,
 {
 	int j;
 	dout("crush_decode_tree_bucket %p to %p\n", *p, end);
-	ceph_decode_32_safe(p, end, b->num_nodes, bad);
+	ceph_decode_8_safe(p, end, b->num_nodes, bad);
 	b->node_weights = kcalloc(b->num_nodes, sizeof(u32), GFP_NOFS);
 	if (b->node_weights == NULL)
 		return -ENOMEM;
@@ -1015,50 +1015,10 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 			__remove_pg_pool(&map->pg_pools, pi);
 	}
 
-	/* new_up */
-	err = -EINVAL;
-	ceph_decode_32_safe(p, end, len, bad);
-	while (len--) {
-		u32 osd;
-		struct ceph_entity_addr addr;
-		ceph_decode_32_safe(p, end, osd, bad);
-		ceph_decode_copy_safe(p, end, &addr, sizeof(addr), bad);
-		ceph_decode_addr(&addr);
-		pr_info("osd%d up\n", osd);
-		BUG_ON(osd >= map->max_osd);
-		map->osd_state[osd] |= CEPH_OSD_UP;
-		map->osd_addr[osd] = addr;
-	}
-
-	/* new_state */
-	ceph_decode_32_safe(p, end, len, bad);
-	while (len--) {
-		u32 osd;
-		u8 xorstate;
-		ceph_decode_32_safe(p, end, osd, bad);
-		xorstate = **(u8 **)p;
-		(*p)++;  /* clean flag */
-		if (xorstate == 0)
-			xorstate = CEPH_OSD_UP;
-		if (xorstate & CEPH_OSD_UP)
-			pr_info("osd%d down\n", osd);
-		if (osd < map->max_osd)
-			map->osd_state[osd] ^= xorstate;
-	}
-
-	/* new_weight */
-	ceph_decode_32_safe(p, end, len, bad);
-	while (len--) {
-		u32 osd, off;
-		ceph_decode_need(p, end, sizeof(u32)*2, bad);
-		osd = ceph_decode_32(p);
-		off = ceph_decode_32(p);
-		pr_info("osd%d weight 0x%x %s\n", osd, off,
-		     off == CEPH_OSD_IN ? "(in)" :
-		     (off == CEPH_OSD_OUT ? "(out)" : ""));
-		if (osd < map->max_osd)
-			map->osd_weight[osd] = off;
-	}
+	/* new_up_client, new_state, new_weight */
+	err = decode_new_up_state_weight(p, end, map);
+	if (err)
+		goto bad;
 
 	/* new_pg_temp */
 	ceph_decode_32_safe(p, end, len, bad);
